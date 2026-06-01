@@ -29,7 +29,7 @@ Admin console and public landing-page migration are out of scope.
 
 ## Local Development
 
-The frontend expects the Ozwell API through the local auth proxy:
+When running Vite locally, point the frontend at the local auth proxy:
 
 ```env
 VITE_OZWELL_API_BASE_URL=http://localhost:3100
@@ -49,6 +49,24 @@ http://localhost:5174/
 ```
 
 The backend and auth proxy must be running separately from `ozwellai-api`.
+
+## Production Server
+
+Build the React app:
+
+```bash
+npm run build
+```
+
+Start the production server on port `3000`:
+
+```bash
+OZWELL_API_TARGET=https://your-ozwell-backend.example.com npm start
+```
+
+`OZWELL_API_TARGET` or `OZWELL_BACKEND_URL` is required. The server fails on startup if neither is set.
+
+In production, React calls same-origin `/v1/manager/...`. The Node server serves the built React app and proxies `/v1/*` to the configured Ozwell backend target while preserving inbound `x-user-*` headers.
 
 ## API Contract
 
@@ -94,4 +112,10 @@ POST /v1/manager/claim-key
 
 ```bash
 npm run build
+```
+
+## Start
+
+```bash
+npm start
 ```
