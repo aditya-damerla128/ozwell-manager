@@ -4,7 +4,7 @@ Standalone React frontend for managing Ozwell agents.
 
 Ozwell Manager is an operational console, not a login surface. Auth is handled by the manager container or local auth proxy. The React app calls the Ozwell API and never creates, edits, or asks users for auth headers during normal agent workflows.
 
-## Current Scope
+## App Features
 
 - View manager identity and provisioning state
 - List agents
@@ -16,7 +16,6 @@ Ozwell Manager is an operational console, not a login surface. Auth is handled b
 - Reveal/copy the manager Ozwell parent key
 - Claim an existing `ozw_` parent key
 
-Admin console and public landing-page migration are out of scope.
 
 ## Stack
 
