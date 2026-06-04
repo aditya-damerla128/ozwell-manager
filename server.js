@@ -8,6 +8,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const distDir = resolve(__dirname, 'dist');
 const indexFile = join(distDir, 'index.html');
 const port = Number(process.env.PORT || 3000);
+const proxyTimeoutMs = Number(process.env.OZWELL_PROXY_TIMEOUT_MS || 60000);
 const targetValue = process.env.OZWELL_API_TARGET || process.env.OZWELL_BACKEND_URL;
 
 if (!targetValue) {
@@ -16,12 +17,27 @@ if (!targetValue) {
   process.exit(1);
 }
 
+if (!Number.isFinite(proxyTimeoutMs) || proxyTimeoutMs <= 0) {
+  console.error('OZWELL_PROXY_TIMEOUT_MS must be a positive number when set.');
+  process.exit(1);
+}
+
 if (!existsSync(indexFile)) {
   console.error('Missing dist/index.html. Run npm run build before starting the production server.');
   process.exit(1);
 }
 
-const target = new URL(targetValue);
+let target;
+try {
+  target = new URL(targetValue);
+} catch {
+  console.error('Invalid backend URL. Set OZWELL_API_TARGET or OZWELL_BACKEND_URL to a valid URL.');
+  process.exit(1);
+}
+if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+  console.error(`Unsupported backend protocol: ${target.protocol}. Use http:// or https://.`);
+  process.exit(1);
+}
 const proxyTransport = target.protocol === 'https:' ? proxyHttpsRequest : proxyRequest;
 
 const contentTypes = new Map([
@@ -59,26 +75,60 @@ function getProxyHeaders(incomingHeaders) {
   return headers;
 }
 
-function sendFile(response, filePath) {
+function sendJsonError(response, statusCode, message) {
+  if (response.destroyed || response.writableEnded) {
+    return;
+  }
+  if (!response.headersSent) {
+    response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  }
+  response.end(JSON.stringify({ error: { message } }));
+}
+
+function sendFile(request, response, filePath) {
   const extension = extname(filePath).toLowerCase();
+  const fileStat = statSync(filePath);
+
   response.writeHead(200, {
     'Content-Type': contentTypes.get(extension) || 'application/octet-stream',
+    'Content-Length': fileStat.size,
   });
-  createReadStream(filePath).pipe(response);
+
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+
+  const stream = createReadStream(filePath);
+  stream.on('error', (error) => {
+    console.error(`Static file stream failed: ${error.message}`);
+    if (response.headersSent) {
+      response.destroy(error);
+      return;
+    }
+    sendJsonError(response, 500, 'Failed to read static file');
+  });
+  stream.pipe(response);
 }
 
 function serveStatic(request, response) {
   const requestUrl = new URL(request.url || '/', 'http://localhost');
-  const decodedPath = decodeURIComponent(requestUrl.pathname);
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(requestUrl.pathname);
+  } catch {
+    sendJsonError(response, 400, 'Malformed request path');
+    return;
+  }
   const normalizedPath = normalize(decodedPath).replace(/^(\.\.[/\\])+/, '');
   const filePath = resolve(distDir, `.${normalizedPath}`);
 
   if (filePath.startsWith(distDir) && existsSync(filePath) && statSync(filePath).isFile()) {
-    sendFile(response, filePath);
+    sendFile(request, response, filePath);
     return;
   }
 
-  sendFile(response, indexFile);
+  sendFile(request, response, indexFile);
 }
 
 function proxyApi(request, response) {
@@ -103,12 +153,21 @@ function proxyApi(request, response) {
     },
   );
 
+  upstreamRequest.setTimeout(proxyTimeoutMs, () => {
+    upstreamRequest.destroy(new Error('Upstream timeout'));
+  });
+
+  request.on('aborted', () => {
+    upstreamRequest.destroy(new Error('Client aborted request'));
+  });
+
   upstreamRequest.on('error', (error) => {
     console.error(`Proxy request failed: ${error.message}`);
-    if (!response.headersSent) {
-      response.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+    if (request.aborted || response.destroyed || response.writableEnded) {
+      return;
     }
-    response.end(JSON.stringify({ error: { message: 'Ozwell backend proxy request failed' } }));
+    const statusCode = error.message === 'Upstream timeout' ? 504 : 502;
+    sendJsonError(response, statusCode, 'Ozwell backend proxy request failed');
   });
 
   request.pipe(upstreamRequest);

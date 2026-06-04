@@ -117,5 +117,7 @@ npm run build
 ## Start
 
 ```bash
-npm start
+OZWELL_API_TARGET=https://your-ozwell-backend.example.com npm start
 ```
+
+`OZWELL_BACKEND_URL` can be used instead of `OZWELL_API_TARGET`.
