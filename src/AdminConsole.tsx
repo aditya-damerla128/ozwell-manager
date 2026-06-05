@@ -1,0 +1,589 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalTitle,
+  SpinnerWithLabel,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@mieweb/ui';
+import { Ban, ChevronRight, PanelRightClose, RefreshCw, ShieldCheck, ShieldMinus } from 'lucide-react';
+import {
+  AdminAgent,
+  AdminParentKey,
+  AdminSummary,
+  AdminUser,
+  AdminUserDetail,
+  ApiError,
+  demoteAdminUser,
+  getAdminSummary,
+  getAdminUser,
+  listAdminUsers,
+  promoteAdminUser,
+  revokeAdminParentKey,
+} from './api';
+
+type ConfirmAction = {
+  title: string;
+  body: string;
+  actionLabel: string;
+  tone: 'promote' | 'demote' | 'revoke';
+  run: () => Promise<void>;
+};
+
+type AdminState = 'loading' | 'ready' | 'error' | 'access-denied';
+
+function displayName(user: AdminUser) {
+  return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || user.email || user.external_user_id || user.id;
+}
+
+function formatNumber(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return '0';
+  return new Intl.NumberFormat(undefined, { notation: value >= 10_000 ? 'compact' : 'standard' }).format(value);
+}
+
+function formatDate(value?: number | string | null) {
+  if (!value) return '-';
+  const date = typeof value === 'number' ? new Date(value < 10_000_000_000 ? value * 1000 : value) : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function metricTokens(user: AdminUser) {
+  return user.metrics?.total_tokens ?? user.total_tokens ?? 0;
+}
+
+function metricRequests(user: AdminUser) {
+  return user.metrics?.request_count ?? user.request_count ?? 0;
+}
+
+function topAgent(agents: AdminAgent[]) {
+  return [...agents].sort((a, b) => (b.metrics?.total_tokens || 0) - (a.metrics?.total_tokens || 0))[0] || null;
+}
+
+function userKey(user: AdminUser) {
+  return user.current_parent_key || null;
+}
+
+function activeParentKey(parentKeys?: AdminParentKey[]) {
+  return parentKeys?.find((key) => key.status !== 'revoked') || null;
+}
+
+function SummaryMetrics({ summary }: { summary: AdminSummary | null }) {
+  const metrics = [
+    ['Users', summary?.users_total || 0],
+    ['Admins', summary?.admins_total || 0],
+    ['Agents', summary?.agents_total || 0],
+    ['Total tokens', formatNumber(summary?.usage?.total_tokens || 0)],
+  ];
+
+  return (
+    <div className="admin-metrics compact" aria-label="Admin summary metrics">
+      {metrics.map(([label, value]) => (
+        <div className="admin-metric" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ConfirmModal({
+  action,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  action: ConfirmAction;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const isDanger = action.tone === 'demote' || action.tone === 'revoke';
+  return (
+    <Modal open onOpenChange={(open) => !open && onClose()} size="md" aria-labelledby="admin-confirm-title">
+      <ModalHeader>
+        <div>
+          <p className="eyebrow">Confirm admin action</p>
+          <ModalTitle id="admin-confirm-title">{action.title}</ModalTitle>
+        </div>
+      </ModalHeader>
+      <ModalBody>
+        <p className="dialog-copy">{action.body}</p>
+        {error && <p className="dialog-copy danger-copy">{error}</p>}
+      </ModalBody>
+      <ModalFooter>
+        <Button variant={isDanger ? 'danger' : 'primary'} type="button" disabled={busy} onClick={onConfirm}>
+          {busy ? 'Working...' : action.actionLabel}
+        </Button>
+        <Button variant="secondary" type="button" disabled={busy} onClick={onClose}>
+          Cancel
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+function UserActions({
+  user,
+  currentKey,
+  onConfirm,
+}: {
+  user: AdminUser;
+  currentKey?: AdminParentKey | null;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const name = displayName(user);
+  const actionableKey = currentKey === undefined ? userKey(user) : currentKey;
+
+  return (
+    <div className="admin-row-actions" onClick={(event) => event.stopPropagation()}>
+      <Button
+        variant="secondary"
+        size="sm"
+        type="button"
+        aria-label={user.is_admin ? `Demote ${name}` : `Promote ${name}`}
+        onClick={() =>
+          onConfirm(
+            user.is_admin
+              ? {
+                  tone: 'demote',
+                  title: `Demote ${name}?`,
+                  body: 'This removes Admin Console access. Their agents and keys remain unchanged.',
+                  actionLabel: 'Demote user',
+                  run: () => demoteAdminUser(user.id).then(() => undefined),
+                }
+              : {
+                  tone: 'promote',
+                  title: `Promote ${name}?`,
+                  body: 'This grants access to admin data and admin actions.',
+                  actionLabel: 'Promote user',
+                  run: () => promoteAdminUser(user.id).then(() => undefined),
+                },
+          )
+        }
+      >
+        {user.is_admin ? 'Demote' : 'Promote'}
+      </Button>
+      <Button
+        variant="danger"
+        size="sm"
+        type="button"
+        disabled={!actionableKey}
+        aria-label={`Revoke current Ozwell key for ${name}`}
+        onClick={() =>
+          actionableKey &&
+          onConfirm({
+            tone: 'revoke',
+            title: `Revoke ${actionableKey.key_hint || actionableKey.id}?`,
+            body: `This disables all agents under ${name}'s current Ozwell key.`,
+            actionLabel: 'Revoke key',
+            run: () => revokeAdminParentKey(actionableKey.id).then(() => undefined),
+          })
+        }
+      >
+        Revoke
+      </Button>
+    </div>
+  );
+}
+
+function UsersTable({
+  users,
+  selectedUserId,
+  onSelect,
+  onConfirm,
+}: {
+  users: AdminUser[];
+  selectedUserId: string;
+  onSelect: (user: AdminUser) => void;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  return (
+    <Table responsive>
+      <TableHeader>
+        <TableRow>
+          <TableHead>User</TableHead>
+          <TableHead>Total usage</TableHead>
+          <TableHead>Ozwell key</TableHead>
+          <TableHead>Admin actions</TableHead>
+          <TableHead aria-label="Open user" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {users.map((user) => {
+          const currentKey = userKey(user);
+          return (
+            <TableRow
+              key={user.id}
+              selected={selectedUserId === user.id}
+              className="admin-select-row"
+              onClick={() => onSelect(user)}
+            >
+              <TableCell>
+                <div className="admin-primary-cell">
+                  <div className="admin-user-line">
+                    <strong>{displayName(user)}</strong>
+                    {user.is_admin && (
+                      <Badge variant="success" size="sm">
+                        Admin
+                      </Badge>
+                    )}
+                  </div>
+                  <span>{user.email || user.username || `External ID ${user.external_user_id || '-'}`}</span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="admin-usage-cell">
+                  <strong>{formatNumber(metricTokens(user))}</strong>
+                  <span>{formatNumber(metricRequests(user))} total requests</span>
+                </div>
+              </TableCell>
+              <TableCell>
+                {currentKey ? (
+                  <div className="admin-key-inline">
+                    <strong>{currentKey.key_hint || currentKey.id}</strong>
+                  </div>
+                ) : (
+                  <Badge variant="danger" size="sm">
+                    No active key
+                  </Badge>
+                )}
+              </TableCell>
+              <TableCell>
+                <UserActions user={user} onConfirm={onConfirm} />
+              </TableCell>
+              <TableCell>
+                <ChevronRight aria-hidden="true" size={16} />
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
+function CurrentKey({ parentKey }: { parentKey: AdminParentKey | null }) {
+  return (
+    <div className="admin-inspector-section">
+      <h4>Current Ozwell key</h4>
+      {parentKey ? (
+        <div className="admin-key-card">
+          <div>
+            <strong>{parentKey.key_hint || parentKey.id}</strong>
+            <span>{parentKey.source || 'active key'}</span>
+          </div>
+          <Badge variant={parentKey.status === 'revoked' ? 'danger' : 'success'} size="sm">
+            {parentKey.status || 'active'}
+          </Badge>
+        </div>
+      ) : (
+        <p className="admin-muted">No active Ozwell key.</p>
+      )}
+    </div>
+  );
+}
+
+function Inspector({
+  detail,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  detail: AdminUserDetail | null;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  if (!detail) return null;
+  const { user } = detail;
+  const agents = detail.agents || [];
+  const currentKey = user.current_parent_key || activeParentKey(detail.parent_keys);
+  const busiestAgent = topAgent(agents);
+
+  return (
+    <aside className="admin-inspector" aria-label={`Admin actions for ${displayName(user)}`}>
+      <div className="admin-inspector-head">
+        <div>
+          <p className="eyebrow">Selected user</p>
+          <h3>{displayName(user)}</h3>
+          <p>
+            {user.email || user.username || 'No email'} · ID {user.external_user_id || user.id}
+          </p>
+        </div>
+        <Badge variant={user.is_admin ? 'success' : 'outline'} size="sm">
+          {user.is_admin ? 'Admin' : 'User'}
+        </Badge>
+        <Button variant="ghost" size="sm" type="button" aria-label="Close user inspector" onClick={onClose}>
+          <PanelRightClose aria-hidden="true" size={16} />
+        </Button>
+      </div>
+
+      {loading ? (
+        <SpinnerWithLabel label="Loading user details" />
+      ) : (
+        <>
+          <section className="admin-compact-panel" aria-label="Top agent by total tokens">
+            <div>
+              <p className="eyebrow">Top agent by total tokens</p>
+              {busiestAgent ? (
+                <>
+                  <h4>{busiestAgent.name || busiestAgent.id}</h4>
+                  <p>{busiestAgent.model || 'No model recorded'}</p>
+                </>
+              ) : (
+                <>
+                  <h4>No agents yet</h4>
+                  <p>This user has no active agent usage to inspect.</p>
+                </>
+              )}
+            </div>
+            {busiestAgent && (
+              <div className="admin-compact-grid">
+                <div>
+                  <span>Total tokens</span>
+                  <strong>{formatNumber(busiestAgent.metrics?.total_tokens || 0)}</strong>
+                </div>
+                <div>
+                  <span>Total requests</span>
+                  <strong>{formatNumber(busiestAgent.metrics?.request_count || 0)}</strong>
+                </div>
+                <div>
+                  <span>Last used</span>
+                  <strong>{formatDate(busiestAgent.metrics?.last_used_at)}</strong>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <UserActions user={user} currentKey={currentKey} onConfirm={onConfirm} />
+          <CurrentKey parentKey={currentKey} />
+
+          <details className="admin-disclosure">
+            <summary>Agent usage</summary>
+            {agents.length ? (
+              <div className="admin-mini-list">
+                {agents.map((agent) => (
+                  <div key={agent.id}>
+                    <div>
+                      <strong>{agent.name || agent.id}</strong>
+                      <span>
+                        {agent.model || 'No model'} · {formatNumber(agent.metrics?.total_tokens || 0)} total tokens
+                      </span>
+                    </div>
+                    <span>{formatNumber(agent.metrics?.request_count || 0)} total requests</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="admin-muted">No active agents.</p>
+            )}
+          </details>
+        </>
+      )}
+    </aside>
+  );
+}
+
+export function AdminConsole() {
+  const [state, setState] = useState<AdminState>('loading');
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedDetail, setSelectedDetail] = useState<AdminUserDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+
+  async function loadAdmin() {
+    setState('loading');
+    setError('');
+    try {
+      const [nextSummary, nextUsers] = await Promise.all([getAdminSummary(), listAdminUsers()]);
+      setSummary(nextSummary);
+      setUsers(nextUsers);
+      setState('ready');
+      return nextUsers;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setState('access-denied');
+        return [];
+      }
+      setError(err instanceof Error ? err.message : 'Unable to load Admin Console.');
+      setState('error');
+      return [];
+    }
+  }
+
+  async function selectUser(user: AdminUser) {
+    if (selectedUserId === user.id) {
+      setSelectedUserId('');
+      setSelectedDetail(null);
+      return;
+    }
+
+    setSelectedUserId(user.id);
+    setSelectedDetail({ user, agents: [], parent_keys: [] });
+    setDetailLoading(true);
+    try {
+      setSelectedDetail(await getAdminUser(user.id));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setState('access-denied');
+      } else {
+        setError(err instanceof Error ? err.message : 'Unable to load user details.');
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function runConfirmedAction() {
+    if (!confirmAction) return;
+    setConfirmBusy(true);
+    setConfirmError('');
+    try {
+      await confirmAction.run();
+      setConfirmAction(null);
+      const nextUsers = await loadAdmin();
+      if (selectedUserId) {
+        const selected = nextUsers.find((user) => user.id === selectedUserId);
+        if (selected) {
+          setSelectedUserId(selected.id);
+          setSelectedDetail(await getAdminUser(selected.id));
+        } else {
+          setSelectedUserId('');
+          setSelectedDetail(null);
+        }
+      }
+    } catch (err) {
+      setConfirmError(err instanceof Error ? err.message : 'Admin action failed.');
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAdmin();
+  }, []);
+
+  const selectedUser = useMemo(() => users.find((user) => user.id === selectedUserId), [selectedUserId, users]);
+
+  useEffect(() => {
+    if (!selectedUser && selectedUserId) {
+      setSelectedUserId('');
+      setSelectedDetail(null);
+    }
+  }, [selectedUser, selectedUserId]);
+
+  if (state === 'loading') {
+    return (
+      <Card className="state-card" variant="outlined" padding="lg">
+        <SpinnerWithLabel label="Loading Admin Console" />
+      </Card>
+    );
+  }
+
+  if (state === 'access-denied') {
+    return (
+      <Card className="state-card" variant="outlined" padding="lg">
+        <h2>Admin access required</h2>
+        <p className="admin-muted">This page is only available to Ozwell administrators.</p>
+      </Card>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <Card className="state-card" variant="outlined" padding="lg">
+        <p className="dialog-copy danger-copy">{error}</p>
+        <div className="panel-actions state-actions">
+          <Button variant="secondary" type="button" leftIcon={<RefreshCw aria-hidden="true" size={16} />} onClick={loadAdmin}>
+            Retry
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="admin-page" variant="outlined" padding="none">
+      <CardHeader className="panel-head">
+        <div>
+          <p className="eyebrow">Admin Console</p>
+          <CardTitle as="h2">Users and usage</CardTitle>
+          <CardDescription>Select a user to see their top agent, usage evidence, and admin actions.</CardDescription>
+        </div>
+        <div className="button-row">
+          <Button variant="secondary" type="button" leftIcon={<RefreshCw aria-hidden="true" size={16} />} onClick={loadAdmin}>
+            Refresh
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="admin-content">
+        <SummaryMetrics summary={summary} />
+
+        <div className={selectedDetail ? 'admin-workspace' : 'admin-workspace table-only'}>
+          <section className="admin-section">
+            <div className="admin-section-head">
+              <div>
+                <p className="eyebrow">Primary admin table</p>
+                <h3>Manager users</h3>
+              </div>
+            </div>
+            <UsersTable users={users} selectedUserId={selectedUserId} onSelect={selectUser} onConfirm={setConfirmAction} />
+          </section>
+
+          <Inspector
+            detail={selectedDetail}
+            loading={detailLoading}
+            onClose={() => {
+              setSelectedUserId('');
+              setSelectedDetail(null);
+            }}
+            onConfirm={setConfirmAction}
+          />
+        </div>
+      </CardContent>
+
+      {confirmAction && (
+        <ConfirmModal
+          action={confirmAction}
+          busy={confirmBusy}
+          error={confirmError}
+          onClose={() => {
+            setConfirmAction(null);
+            setConfirmError('');
+          }}
+          onConfirm={runConfirmedAction}
+        />
+      )}
+    </Card>
+  );
+}
