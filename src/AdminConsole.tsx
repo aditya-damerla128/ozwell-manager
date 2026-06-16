@@ -55,6 +55,16 @@ function formatNumber(value?: number | null) {
   return new Intl.NumberFormat(undefined, { notation: value >= 10_000 ? 'compact' : 'standard' }).format(value);
 }
 
+function formatTokens(totalTokens?: number | null, requestCount?: number | null) {
+  const tokens = totalTokens || 0;
+  if (tokens === 0 && (requestCount || 0) > 0) return '0 known tokens';
+  return `${formatNumber(tokens)} tokens`;
+}
+
+function formatRequests(requestCount?: number | null) {
+  return `${formatNumber(requestCount || 0)} requests`;
+}
+
 function formatDate(value?: number | string | null) {
   if (!value) return '-';
   const date = typeof value === 'number' ? new Date(value < 10_000_000_000 ? value * 1000 : value) : new Date(value);
@@ -257,8 +267,8 @@ function UsersTable({
               </TableCell>
               <TableCell>
                 <div className="admin-usage-cell">
-                  <strong>{formatNumber(metricTokens(user))}</strong>
-                  <span>{formatNumber(metricRequests(user))} total requests</span>
+                  <strong>{formatTokens(metricTokens(user), metricRequests(user))}</strong>
+                  <span>{formatRequests(metricRequests(user))}</span>
                 </div>
               </TableCell>
               <TableCell>
@@ -323,6 +333,8 @@ function Inspector({
   const agents = detail.agents || [];
   const currentKey = user.current_parent_key || activeParentKey(detail.parent_keys);
   const busiestAgent = topAgent(agents);
+  const unattributedUsage = detail.unattributed_usage;
+  const showUnattributedUsage = (unattributedUsage?.request_count || 0) > 0;
 
   return (
     <aside className="admin-inspector" aria-label={`Admin actions for ${displayName(user)}`}>
@@ -365,11 +377,11 @@ function Inspector({
               <div className="admin-compact-grid">
                 <div>
                   <span>Total tokens</span>
-                  <strong>{formatNumber(busiestAgent.metrics?.total_tokens || 0)}</strong>
+                  <strong>{formatTokens(busiestAgent.metrics?.total_tokens, busiestAgent.metrics?.request_count)}</strong>
                 </div>
                 <div>
                   <span>Total requests</span>
-                  <strong>{formatNumber(busiestAgent.metrics?.request_count || 0)}</strong>
+                  <strong>{formatRequests(busiestAgent.metrics?.request_count)}</strong>
                 </div>
                 <div>
                   <span>Last used</span>
@@ -384,19 +396,28 @@ function Inspector({
 
           <details className="admin-disclosure">
             <summary>Agent usage</summary>
-            {agents.length ? (
+            {agents.length || showUnattributedUsage ? (
               <div className="admin-mini-list">
                 {agents.map((agent) => (
                   <div key={agent.id}>
                     <div>
                       <strong>{agent.name || agent.id}</strong>
                       <span>
-                        {agent.model || 'No model'} · {formatNumber(agent.metrics?.total_tokens || 0)} total tokens
+                        {agent.model || 'No model'} · {formatTokens(agent.metrics?.total_tokens, agent.metrics?.request_count)}
                       </span>
                     </div>
-                    <span>{formatNumber(agent.metrics?.request_count || 0)} total requests</span>
+                    <span>{formatRequests(agent.metrics?.request_count)}</span>
                   </div>
                 ))}
+                {showUnattributedUsage && (
+                  <div className="admin-unattributed-usage">
+                    <div>
+                      <strong>Parent key usage</strong>
+                      <span>Not tied to a specific agent · {formatTokens(unattributedUsage?.total_tokens, unattributedUsage?.request_count)}</span>
+                    </div>
+                    <span>{formatRequests(unattributedUsage?.request_count)}</span>
+                  </div>
+                )}
               </div>
             ) : (
               <p className="admin-muted">No active agents.</p>

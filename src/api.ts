@@ -126,6 +126,7 @@ export type AdminUserDetail = {
   user: AdminUser;
   parent_keys?: AdminParentKey[];
   agents?: AdminAgent[];
+  unattributed_usage?: UsageMetrics;
 };
 
 export class ApiError extends Error {

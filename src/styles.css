@@ -845,6 +845,13 @@ body {
   padding-top: 0;
 }
 
+.admin-mini-list > .admin-unattributed-usage {
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--mieweb-muted, #f8fafc);
+}
+
 .admin-mini-list div div {
   display: grid;
   gap: 2px;
