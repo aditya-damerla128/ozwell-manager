@@ -58,7 +58,7 @@ function formatNumber(value?: number | null) {
 function formatTokens(totalTokens?: number | null, requestCount?: number | null) {
   const tokens = totalTokens || 0;
   if (tokens === 0 && (requestCount || 0) > 0) return '0 known tokens';
-  return `${formatNumber(tokens)} tokens`;
+  return `${formatNumber(tokens)} recorded tokens`;
 }
 
 function formatRequests(requestCount?: number | null) {
@@ -103,7 +103,7 @@ function SummaryMetrics({ summary }: { summary: AdminSummary | null }) {
     ['Users', summary?.users_total || 0],
     ['Admins', summary?.admins_total || 0],
     ['Agents', summary?.agents_total || 0],
-    ['Total tokens', formatNumber(summary?.usage?.total_tokens || 0)],
+    ['Recorded tokens', formatNumber(summary?.usage?.total_tokens || 0)],
   ];
 
   return (
@@ -358,9 +358,9 @@ function Inspector({
         <SpinnerWithLabel label="Loading user details" />
       ) : (
         <>
-          <section className="admin-compact-panel" aria-label="Top agent by total tokens">
+          <section className="admin-compact-panel" aria-label="Top agent by recorded tokens">
             <div>
-              <p className="eyebrow">Top agent by total tokens</p>
+              <p className="eyebrow">Top agent by recorded tokens</p>
               {busiestAgent ? (
                 <>
                   <h4>{busiestAgent.name || busiestAgent.id}</h4>
@@ -376,7 +376,7 @@ function Inspector({
             {busiestAgent && (
               <div className="admin-compact-grid">
                 <div>
-                  <span>Total tokens</span>
+                  <span>Recorded tokens</span>
                   <strong>{formatTokens(busiestAgent.metrics?.total_tokens, busiestAgent.metrics?.request_count)}</strong>
                 </div>
                 <div>
