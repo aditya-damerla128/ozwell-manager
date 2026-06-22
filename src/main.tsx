@@ -20,7 +20,7 @@ import {
   ThemeProvider,
   ThemeToggle,
 } from '@mieweb/ui';
-import { ArrowLeft, ChevronRight, Copy, Eye, KeyRound, Plus, RefreshCw, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Copy, Eye, KeyRound, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import {
   AgentDetail,
   AgentListItem,
@@ -40,12 +40,13 @@ import {
   rotateAgentKey,
   updateAgent,
 } from './api';
+import { AdminConsole } from './AdminConsole';
 import { BrandInitializer, useBrand } from './brand';
 import '@mieweb/q/style.css';
 import './styles.css';
 
 type LoadState = 'loading' | 'ready' | 'error';
-type Page = 'agents' | 'editor';
+type Page = 'agents' | 'editor' | 'admin';
 type EditorMode = 'create' | 'edit';
 type KeyMode = 'reveal' | 'rotate' | 'created' | 'saved';
 type ParentKeyDialogMode = 'reveal' | 'claim';
@@ -674,7 +675,7 @@ function App() {
   const [selectedAgent, setSelectedAgent] = useState<AgentDetail | null>(null);
   const [state, setState] = useState<LoadState>('loading');
   const [agentsLoading, setAgentsLoading] = useState(false);
-  const [page, setPage] = useState<Page>('agents');
+  const [page, setPage] = useState<Page>(() => (window.location.pathname === '/admin' ? 'admin' : 'agents'));
   const [editorMode, setEditorMode] = useState<EditorMode>('create');
   const [schema, setSchema] = useState<Record<string, unknown>>(() => cloneSchema());
   const [error, setError] = useState('');
@@ -761,6 +762,20 @@ function App() {
     setPage('editor');
   }
 
+  function openAdmin() {
+    window.history.pushState(null, '', '/admin');
+    setSelectedAgent(null);
+    setPage('admin');
+  }
+
+  function closeAdmin() {
+    window.history.pushState(null, '', '/');
+    setPage('agents');
+    if (!me) {
+      void load();
+    }
+  }
+
   async function removeAgent(agent: Pick<AgentDetail, 'agent_id' | 'name'>) {
     const confirmed = window.confirm(`Delete "${agent.name || agent.agent_id}"? This cannot be undone.`);
     if (!confirmed) return;
@@ -796,7 +811,15 @@ function App() {
   }
 
   useEffect(() => {
-    load();
+    void load();
+  }, []);
+
+  useEffect(() => {
+    function syncPageFromPath() {
+      setPage(window.location.pathname === '/admin' ? 'admin' : 'agents');
+    }
+    window.addEventListener('popstate', syncPageFromPath);
+    return () => window.removeEventListener('popstate', syncPageFromPath);
   }, []);
 
   const displayName = getDisplayName(me || undefined);
@@ -807,11 +830,22 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Ozwell Manager</p>
-          <h1>{page === 'editor' ? 'Agent editor' : 'Agent management'}</h1>
+          <h1>{page === 'editor' ? 'Agent editor' : page === 'admin' ? 'Admin Console' : 'Agent management'}</h1>
         </div>
         <div className="topbar-meta">
           <span>{displayName}</span>
           <div className="topbar-controls">
+            {me?.is_admin && (
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={page === 'admin' ? closeAdmin : openAdmin}
+                leftIcon={<ShieldCheck aria-hidden="true" size={15} />}
+              >
+                {page === 'admin' ? 'Agents' : 'Admin Console'}
+              </Button>
+            )}
             <Select
               className="brand-select"
               hideLabel
@@ -827,7 +861,9 @@ function App() {
         </div>
       </header>
 
-      {state === 'loading' && <EmptyState title="Connecting to Ozwell">Checking the current manager session.</EmptyState>}
+      {state === 'loading' && (
+        <EmptyState title="Connecting to Ozwell">Checking the current manager session.</EmptyState>
+      )}
 
       {state === 'error' && (
         <Card className="state-card" variant="outlined" padding="lg">
@@ -840,7 +876,7 @@ function App() {
         </Card>
       )}
 
-      {state === 'ready' && me && !me.provisioned && (
+      {state === 'ready' && me && !me.provisioned && page !== 'admin' && (
         <Card className="state-card" variant="outlined" padding="lg">
           <EmptyState title="Account not provisioned yet">
             This Ozwell account is signed in, but agent management has not been enabled for it yet. Once provisioning is complete,
@@ -848,6 +884,12 @@ function App() {
           </EmptyState>
         </Card>
       )}
+
+      {state === 'ready' && page === 'admin' && (me?.is_admin ? <AdminConsole /> : (
+        <Card className="state-card" variant="outlined" padding="lg">
+          <EmptyState title="Admin access required">This page is only available to Ozwell administrators.</EmptyState>
+        </Card>
+      ))}
 
       {state === 'ready' && me?.provisioned && page === 'agents' && (
         <AgentsPage

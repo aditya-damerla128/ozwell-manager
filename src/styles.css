@@ -37,6 +37,7 @@ body {
 .topbar,
 .agents-page,
 .editor-page,
+.admin-page,
 .state-card {
   width: min(1500px, 100%);
   margin-inline: auto;
@@ -89,7 +90,8 @@ body {
 }
 
 .agents-page,
-.editor-page {
+.editor-page,
+.admin-page {
   overflow: visible;
 }
 
@@ -423,6 +425,465 @@ body {
   font-size: 13px;
 }
 
+.admin-content {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.admin-metrics.compact .admin-metric {
+  min-height: 58px;
+}
+
+.admin-metric {
+  min-width: 0;
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 6px;
+  padding: 10px 11px;
+  background: var(--mieweb-card, #fff);
+}
+
+.admin-metric span {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 6px;
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-metric strong {
+  display: block;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.admin-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 14px;
+  align-items: start;
+}
+
+.admin-workspace.table-only {
+  grid-template-columns: 1fr;
+}
+
+.admin-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-section-head h3 {
+  margin: 0;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 16px;
+  font-weight: 760;
+}
+
+.admin-section table {
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.admin-section th:nth-child(1),
+.admin-section td:nth-child(1) {
+  width: 29%;
+}
+
+.admin-section th:nth-child(2),
+.admin-section td:nth-child(2) {
+  width: 19%;
+}
+
+.admin-section th:nth-child(3),
+.admin-section td:nth-child(3) {
+  width: 17%;
+}
+
+.admin-section th:nth-child(4),
+.admin-section td:nth-child(4) {
+  width: 27%;
+}
+
+.admin-section th:nth-child(5),
+.admin-section td:nth-child(5) {
+  width: 8%;
+}
+
+.admin-section th {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin-section td {
+  vertical-align: middle;
+}
+
+.admin-primary-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-primary-cell.compact {
+  min-width: 0;
+}
+
+.admin-user-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.admin-primary-cell strong {
+  overflow: hidden;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-primary-cell span,
+.admin-section td {
+  color: var(--mieweb-muted-foreground, #667386);
+}
+
+.admin-primary-cell span {
+  overflow: hidden;
+  max-width: 100%;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-muted-cell {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 12px;
+}
+
+.admin-usage-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 95px;
+}
+
+.admin-usage-cell strong {
+  color: var(--mieweb-foreground, #172033);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.admin-usage-cell span {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.admin-select-row {
+  cursor: pointer;
+}
+
+.admin-select-row:hover {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--mieweb-primary, #147e9f) 8%, transparent), transparent 46%),
+    var(--mieweb-muted, #f8fafc);
+}
+
+.admin-key-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.admin-key-inline strong {
+  overflow: hidden;
+  color: var(--mieweb-foreground, #172033);
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.admin-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-row-actions button {
+  min-width: 0;
+  padding-right: 9px;
+  padding-left: 9px;
+  white-space: nowrap;
+}
+
+.admin-inspector {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 7px;
+  padding: 14px;
+  background: var(--mieweb-card, #fff);
+}
+
+.admin-inspector-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-inspector-head h3 {
+  margin: 0;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 18px;
+  font-weight: 780;
+}
+
+.admin-inspector-head p:not(.eyebrow),
+.admin-muted {
+  margin: 3px 0 0;
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 12px;
+}
+
+.admin-action-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.admin-action-bar button {
+  width: 100%;
+}
+
+.admin-compact-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--mieweb-border, #dce4ec);
+  border-bottom: 1px solid var(--mieweb-border, #dce4ec);
+  padding: 12px 0;
+}
+
+.admin-compact-panel h4 {
+  margin: 2px 0 0;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.admin-compact-panel p:not(.eyebrow) {
+  margin: 3px 0 0;
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 12px;
+}
+
+.admin-compact-grid,
+.admin-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-compact-grid div,
+.admin-status-strip div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-compact-grid span,
+.admin-status-strip span {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-compact-grid strong,
+.admin-status-strip strong {
+  overflow: hidden;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 12px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-status-strip {
+  border-top: 1px solid var(--mieweb-border, #dce4ec);
+  border-bottom: 1px solid var(--mieweb-border, #dce4ec);
+  padding: 10px 0;
+}
+
+.admin-inspector-section {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-inspector-section h4 {
+  margin: 0;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.admin-key-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--mieweb-muted, #f8fafc);
+}
+
+.admin-key-card div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-key-card strong {
+  color: var(--mieweb-foreground, #172033);
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.admin-key-card span,
+.admin-mini-list span {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 11px;
+}
+
+.admin-inspector-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-inspector-stats div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 5px;
+  padding: 8px;
+}
+
+.admin-inspector-stats span {
+  color: var(--mieweb-muted-foreground, #667386);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.admin-inspector-stats strong {
+  overflow: hidden;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 12px;
+  font-weight: 740;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mini-list {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-mini-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--mieweb-border, #dce4ec);
+  padding-top: 7px;
+}
+
+.admin-mini-list > div:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.admin-mini-list > .admin-unattributed-usage {
+  border: 1px solid var(--mieweb-border, #dce4ec);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--mieweb-muted, #f8fafc);
+}
+
+.admin-mini-list div div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-mini-list strong {
+  overflow: hidden;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 12px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-disclosure {
+  border-top: 1px solid var(--mieweb-border, #dce4ec);
+  padding-top: 9px;
+}
+
+.admin-disclosure summary {
+  cursor: pointer;
+  color: var(--mieweb-foreground, #172033);
+  font-size: 12px;
+  font-weight: 780;
+  list-style-position: outside;
+}
+
+.admin-disclosure[open] summary {
+  margin-bottom: 8px;
+}
+
 @media (max-width: 920px) {
   .app-shell {
     padding: 16px;
@@ -501,4 +962,25 @@ body {
     flex-direction: column;
   }
 
+  .admin-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-workspace,
+  .admin-compact-grid,
+  .admin-status-strip,
+  .admin-inspector-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-inspector {
+    position: static;
+  }
+
+}
+
+@media (min-width: 921px) and (max-width: 1260px) {
+  .admin-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
