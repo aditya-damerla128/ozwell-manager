@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@mieweb/ui';
-import { Ban, ChevronRight, PanelRightClose, RefreshCw, ShieldCheck, ShieldMinus } from 'lucide-react';
+import { ChevronRight, PanelRightClose, RefreshCw } from 'lucide-react';
 import {
   AdminAgent,
   AdminParentKey,
@@ -28,12 +28,17 @@ import {
   AdminUser,
   AdminUserDetail,
   ApiError,
+  ModelListItem,
+  ModelRef,
   demoteAdminUser,
   getAdminSummary,
   getAdminUser,
+  getModelRestrictions,
+  listModels,
   listAdminUsers,
   promoteAdminUser,
   revokeAdminParentKey,
+  updateModelRestrictions,
 } from './api';
 
 type ConfirmAction = {
@@ -45,6 +50,52 @@ type ConfirmAction = {
 };
 
 type AdminState = 'loading' | 'ready' | 'error' | 'access-denied';
+
+function modelProvider(model: ModelListItem | ModelRef) {
+  return model.provider || 'unknown';
+}
+
+function providerLabel(provider: string) {
+  const labels: Record<string, string> = {
+    anthropic: 'Anthropic',
+    ollama: 'Ollama',
+    openai: 'OpenAI',
+  };
+  return labels[provider.toLowerCase()] || provider;
+}
+
+function modelName(model: ModelListItem | ModelRef) {
+  return model.model || ('id' in model ? model.id : '');
+}
+
+function modelKey(model: ModelListItem | ModelRef) {
+  return `${modelProvider(model)}:${modelName(model)}`;
+}
+
+function modelLabel(model: ModelListItem | ModelRef) {
+  if ('label' in model && model.label) return model.label;
+  const provider = modelProvider(model);
+  const name = modelName(model);
+  return provider && provider !== 'unknown' ? `${provider} / ${name}` : name;
+}
+
+function enabledModels(models: ModelListItem[]) {
+  return models.filter((model) => model.enabled !== false && modelName(model));
+}
+
+function groupModelsByProvider(models: ModelListItem[]) {
+  return enabledModels(models).reduce<Record<string, ModelListItem[]>>((groups, model) => {
+    const provider = modelProvider(model);
+    groups[provider] = groups[provider] || [];
+    groups[provider].push(model);
+    return groups;
+  }, {});
+}
+
+function displayKeyHint(parentKey?: AdminParentKey | null) {
+  const value = parentKey?.key_hint || parentKey?.id || '';
+  return value.replace(/^ozw_(?:\.\.\.ozw_)+/, 'ozw_');
+}
 
 function displayName(user: AdminUser) {
   return [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || user.email || user.external_user_id || user.id;
@@ -274,7 +325,7 @@ function UsersTable({
               <TableCell>
                 {currentKey ? (
                   <div className="admin-key-inline">
-                    <strong>{currentKey.key_hint || currentKey.id}</strong>
+                    <strong>{displayKeyHint(currentKey)}</strong>
                   </div>
                 ) : (
                   <Badge variant="danger" size="sm">
@@ -303,7 +354,7 @@ function CurrentKey({ parentKey }: { parentKey: AdminParentKey | null }) {
       {parentKey ? (
         <div className="admin-key-card">
           <div>
-            <strong>{parentKey.key_hint || parentKey.id}</strong>
+            <strong>{displayKeyHint(parentKey)}</strong>
             <span>{parentKey.source || 'active key'}</span>
           </div>
           <Badge variant={parentKey.status === 'revoked' ? 'danger' : 'success'} size="sm">
@@ -317,14 +368,192 @@ function CurrentKey({ parentKey }: { parentKey: AdminParentKey | null }) {
   );
 }
 
+function ModelRestrictionsEditor({
+  parentKey,
+  allModels,
+}: {
+  parentKey: AdminParentKey | null;
+  allModels: ModelListItem[];
+}) {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [allowedKeys, setAllowedKeys] = useState<Set<string>>(new Set());
+  const [unrestricted, setUnrestricted] = useState(true);
+  const [effectiveModels, setEffectiveModels] = useState<ModelListItem[]>([]);
+
+  const groupedModels = useMemo(() => groupModelsByProvider(allModels), [allModels]);
+  const providerNames = useMemo(() => Object.keys(groupedModels).sort(), [groupedModels]);
+  const restrictionsEnabled = !unrestricted;
+  const selectedKeys = useMemo(() => {
+    if (!unrestricted) return allowedKeys;
+    return new Set(enabledModels(allModels).map(modelKey));
+  }, [allowedKeys, allModels, unrestricted]);
+
+  async function loadRestrictions() {
+    if (!parentKey) return;
+    setLoading(true);
+    setError('');
+    try {
+      const restrictions = await getModelRestrictions(parentKey.id);
+      setAllowedKeys(new Set((restrictions.allowed_models || []).map(modelKey)));
+      setUnrestricted((restrictions.allowed_models || []).length === 0);
+      setEffectiveModels(restrictions.effective_models || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load model restrictions.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setAllowedKeys(new Set());
+    setUnrestricted(true);
+    setEffectiveModels([]);
+    void loadRestrictions();
+  }, [parentKey?.id]);
+
+  function providerSelected(provider: string) {
+    const models = groupedModels[provider] || [];
+    return models.length > 0 && models.every((model) => selectedKeys.has(modelKey(model)));
+  }
+
+  function setProvider(provider: string, enabled: boolean) {
+    const next = new Set(selectedKeys);
+    for (const model of groupedModels[provider] || []) {
+      const key = modelKey(model);
+      if (enabled) next.add(key);
+      else next.delete(key);
+    }
+    setUnrestricted(false);
+    setAllowedKeys(next);
+  }
+
+  function setModel(model: ModelListItem, enabled: boolean) {
+    const next = new Set(selectedKeys);
+    const key = modelKey(model);
+    if (enabled) next.add(key);
+    else next.delete(key);
+    setUnrestricted(false);
+    setAllowedKeys(next);
+  }
+
+  async function saveRestrictions(nextKeys = allowedKeys) {
+    if (!parentKey) return;
+    setSaving(true);
+    setError('');
+    try {
+      const enabled = enabledModels(allModels);
+      const allowedModels = nextKeys.size
+        ? enabled
+            .filter((model) => nextKeys.has(modelKey(model)))
+            .map((model) => ({ provider: modelProvider(model), model: modelName(model) }))
+        : [];
+      const saved = await updateModelRestrictions(parentKey.id, allowedModels);
+      setAllowedKeys(new Set((saved.allowed_models || []).map(modelKey)));
+      setUnrestricted((saved.allowed_models || []).length === 0);
+      setEffectiveModels(saved.effective_models || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save model restrictions.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetRestrictions() {
+    const empty = new Set<string>();
+    setAllowedKeys(empty);
+    setUnrestricted(true);
+    await saveRestrictions(empty);
+  }
+
+  return (
+    <div className="admin-inspector-section model-restrictions">
+      <div className="model-restrictions-head">
+        <div>
+          <h4>Model restrictions</h4>
+          <p className="admin-muted">
+            {restrictionsEnabled ? 'Only selected models are available for this Ozwell key.' : 'All enabled models allowed.'}
+          </p>
+        </div>
+        <div className="model-restrictions-actions">
+          <Button variant="secondary" size="sm" type="button" disabled={!parentKey || loading || saving} onClick={() => saveRestrictions()}>
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
+          <Button variant="secondary" size="sm" type="button" disabled={!parentKey || loading || saving} onClick={resetRestrictions}>
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      {!parentKey && <p className="admin-muted">No active Ozwell key.</p>}
+      {parentKey && loading && <SpinnerWithLabel label="Loading model restrictions" />}
+      {error && <p className="dialog-copy danger-copy">{error}</p>}
+
+      {parentKey && providerNames.length > 0 && (
+        <>
+          <div className="model-restrictions-groups">
+            {providerNames.map((provider) => (
+              <details className="model-provider-group" key={provider} open>
+                <summary>
+                  <label className="model-provider-toggle" onClick={(event) => event.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={providerSelected(provider)}
+                      onChange={(event) => setProvider(provider, event.target.checked)}
+                    />
+                    <span>{providerLabel(provider)}</span>
+                  </label>
+                  <span className="model-provider-count">{groupedModels[provider]?.length || 0} models</span>
+                </summary>
+                <div className="model-option-list">
+                  {(groupedModels[provider] || []).map((model) => (
+                    <label className="model-option" key={modelKey(model)}>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(modelKey(model))}
+                        onChange={(event) => setModel(model, event.target.checked)}
+                      />
+                      <span>{modelLabel(model)}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+
+          <div className="effective-models">
+            <span>Effective models</span>
+            {effectiveModels.length ? (
+              <div className="model-chip-list" aria-label={`${effectiveModels.length} effective models`}>
+                <strong>{effectiveModels.length}</strong>
+                {effectiveModels.map((model) => (
+                  <span className="model-chip" key={modelKey(model)}>
+                    {modelLabel(model)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <strong>None returned</strong>
+            )}
+          </div>
+        </>
+      )}
+      {parentKey && !loading && providerNames.length === 0 && <p className="admin-muted">No discovered models returned.</p>}
+    </div>
+  );
+}
+
 function Inspector({
   detail,
   loading,
+  allModels,
   onClose,
   onConfirm,
 }: {
   detail: AdminUserDetail | null;
   loading: boolean;
+  allModels: ModelListItem[];
   onClose: () => void;
   onConfirm: (action: ConfirmAction) => void;
 }) {
@@ -393,6 +622,7 @@ function Inspector({
 
           <UserActions user={user} currentKey={currentKey} onConfirm={onConfirm} />
           <CurrentKey parentKey={currentKey} />
+          <ModelRestrictionsEditor parentKey={currentKey} allModels={allModels} />
 
           <details className="admin-disclosure">
             <summary>Agent usage</summary>
@@ -433,6 +663,7 @@ export function AdminConsole() {
   const [state, setState] = useState<AdminState>('loading');
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [models, setModels] = useState<ModelListItem[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedDetail, setSelectedDetail] = useState<AdminUserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -445,9 +676,10 @@ export function AdminConsole() {
     setState('loading');
     setError('');
     try {
-      const [nextSummary, nextUsers] = await Promise.all([getAdminSummary(), listAdminUsers()]);
+      const [nextSummary, nextUsers, nextModels] = await Promise.all([getAdminSummary(), listAdminUsers(), listModels()]);
       setSummary(nextSummary);
       setUsers(nextUsers);
+      setModels(nextModels);
       setState('ready');
       return nextUsers;
     } catch (err) {
@@ -584,6 +816,7 @@ export function AdminConsole() {
           <Inspector
             detail={selectedDetail}
             loading={detailLoading}
+            allModels={models}
             onClose={() => {
               setSelectedUserId('');
               setSelectedDetail(null);
