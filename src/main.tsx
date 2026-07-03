@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AgentConfigGenerator } from '@mieweb/q';
 import {
@@ -470,20 +470,25 @@ function KeyDialog({
   const [result, setResult] = useState<KeyResponse | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  const operation = useRef<Promise<KeyResponse> | null>(null);
+  const handledOperation = useRef(false);
 
   useEffect(() => {
     let active = true;
     if (mode === 'saved') return undefined;
     const action = mode === 'rotate' ? rotateAgentKey : revealAgentKey;
-    action(agent.agent_id)
+    operation.current ??= action(agent.agent_id);
+    operation.current
       .then((payload) => {
-        if (!active) return;
+        if (!active || handledOperation.current) return;
+        handledOperation.current = true;
         setResult(payload);
         setState('ready');
         if (mode === 'rotate') onRotated();
       })
       .catch((err) => {
-        if (!active) return;
+        if (!active || handledOperation.current) return;
+        handledOperation.current = true;
         setError(err instanceof Error ? err.message : 'Key operation failed.');
         setState('error');
       });
