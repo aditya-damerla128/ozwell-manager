@@ -12,11 +12,11 @@
   "dependencies": {
     "@mieweb/q": "^1.0.0",
     "@mieweb/ui": "^0.6.1",
-    "@vitejs/plugin-react": "^4.7.0",
+    "@vitejs/plugin-react": "^6.0.3",
     "lucide-react": "^0.562.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "vite": "^5.4.21"
+    "vite": "^8.1.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",
