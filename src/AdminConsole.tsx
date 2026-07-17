@@ -72,6 +72,14 @@ function modelKey(model: ModelListItem | ModelRef) {
   return `${modelProvider(model)}:${modelName(model)}`;
 }
 
+function providerWideKey(provider: string) {
+  return `${provider}:*`;
+}
+
+function selectionKey(model: ModelRef) {
+  return model.model ? modelKey(model) : providerWideKey(model.provider);
+}
+
 function modelLabel(model: ModelListItem | ModelRef) {
   if ('label' in model && model.label) return model.label;
   const provider = modelProvider(model);
@@ -375,6 +383,7 @@ function ModelRestrictionsEditor({
   parentKey: AdminParentKey | null;
   allModels: ModelListItem[];
 }) {
+  const [filterQuery, setFilterQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -389,6 +398,17 @@ function ModelRestrictionsEditor({
     if (!unrestricted) return allowedKeys;
     return new Set(enabledModels(allModels).map(modelKey));
   }, [allowedKeys, allModels, unrestricted]);
+  const filteredGrouped = useMemo(() => {
+    if (!filterQuery.trim()) return groupedModels;
+    const query = filterQuery.toLowerCase();
+    const result: Record<string, ModelListItem[]> = {};
+    for (const [provider, list] of Object.entries(groupedModels)) {
+      const filtered = list.filter((model) => modelName(model).toLowerCase().includes(query) || provider.toLowerCase().includes(query));
+      if (filtered.length) result[provider] = filtered;
+    }
+    return result;
+  }, [filterQuery, groupedModels]);
+  const filteredProviderNames = useMemo(() => Object.keys(filteredGrouped).sort(), [filteredGrouped]);
 
   async function loadRestrictions() {
     if (!parentKey) return;
@@ -396,7 +416,7 @@ function ModelRestrictionsEditor({
     setError('');
     try {
       const restrictions = await getModelRestrictions(parentKey.id);
-      setAllowedKeys(new Set((restrictions.allowed_models || []).map(modelKey)));
+      setAllowedKeys(new Set((restrictions.allowed_models || []).map(selectionKey)));
       setUnrestricted((restrictions.allowed_models || []).length === 0);
       setEffectiveModels(restrictions.effective_models || []);
     } catch (err) {
@@ -415,27 +435,45 @@ function ModelRestrictionsEditor({
 
   function providerSelected(provider: string) {
     const models = groupedModels[provider] || [];
-    return models.length > 0 && models.every((model) => selectedKeys.has(modelKey(model)));
+    return selectedKeys.has(providerWideKey(provider)) || (models.length > 0 && models.every((model) => selectedKeys.has(modelKey(model))));
+  }
+
+  function modelSelected(model: ModelListItem) {
+    return selectedKeys.has(providerWideKey(modelProvider(model))) || selectedKeys.has(modelKey(model));
   }
 
   function setProvider(provider: string, enabled: boolean) {
     const next = new Set(selectedKeys);
     for (const model of groupedModels[provider] || []) {
-      const key = modelKey(model);
-      if (enabled) next.add(key);
-      else next.delete(key);
+      next.delete(modelKey(model));
     }
+    if (enabled) next.add(providerWideKey(provider));
+    else next.delete(providerWideKey(provider));
     setUnrestricted(false);
     setAllowedKeys(next);
   }
 
   function setModel(model: ModelListItem, enabled: boolean) {
+    const provider = modelProvider(model);
+    const providerModels = groupedModels[provider] || [];
     const next = new Set(selectedKeys);
-    const key = modelKey(model);
-    if (enabled) next.add(key);
-    else next.delete(key);
+    next.delete(providerWideKey(provider));
+    for (const item of providerModels) {
+      const key = modelKey(item);
+      if (key === modelKey(model)) {
+        if (enabled) next.add(key);
+      } else if (modelSelected(item)) {
+        next.add(key);
+      }
+    }
     setUnrestricted(false);
     setAllowedKeys(next);
+  }
+
+  function enableRestrictions() {
+    if (!unrestricted) return;
+    setUnrestricted(false);
+    setAllowedKeys(new Set(enabledModels(allModels).map(modelKey)));
   }
 
   async function saveRestrictions(nextKeys = allowedKeys) {
@@ -444,13 +482,17 @@ function ModelRestrictionsEditor({
     setError('');
     try {
       const enabled = enabledModels(allModels);
+      const providers = Array.from(new Set(enabled.map(modelProvider))).sort();
       const allowedModels = nextKeys.size
-        ? enabled
-            .filter((model) => nextKeys.has(modelKey(model)))
-            .map((model) => ({ provider: modelProvider(model), model: modelName(model) }))
+        ? providers.flatMap((provider) => {
+            if (nextKeys.has(providerWideKey(provider))) return [{ provider }];
+            return enabled
+              .filter((model) => modelProvider(model) === provider && nextKeys.has(modelKey(model)))
+              .map((model) => ({ provider, model: modelName(model) }));
+          })
         : [];
       const saved = await updateModelRestrictions(parentKey.id, allowedModels);
-      setAllowedKeys(new Set((saved.allowed_models || []).map(modelKey)));
+      setAllowedKeys(new Set((saved.allowed_models || []).map(selectionKey)));
       setUnrestricted((saved.allowed_models || []).length === 0);
       setEffectiveModels(saved.effective_models || []);
     } catch (err) {
@@ -492,34 +534,85 @@ function ModelRestrictionsEditor({
 
       {parentKey && providerNames.length > 0 && (
         <>
+          <div className="agent-model-mode-toggle">
+            <button
+              type="button"
+              className={`agent-model-mode-btn${unrestricted ? ' active' : ''}`}
+              onClick={() => {
+                setUnrestricted(true);
+                setAllowedKeys(new Set());
+              }}
+              disabled={loading || saving}
+            >
+              Any model
+            </button>
+            <button
+              type="button"
+              className={`agent-model-mode-btn${!unrestricted ? ' active' : ''}`}
+              onClick={enableRestrictions}
+              disabled={loading || saving}
+            >
+              Specific models
+              {!unrestricted && <span className="agent-model-mode-count">{allowedKeys.size}</span>}
+            </button>
+          </div>
+
+          {!unrestricted && (
+            <input
+              className="agent-model-filter"
+              type="search"
+              placeholder="Filter models..."
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              disabled={loading || saving}
+            />
+          )}
+
           <div className="model-restrictions-groups">
-            {providerNames.map((provider) => (
-              <details className="model-provider-group" key={provider} open>
-                <summary>
-                  <label className="model-provider-toggle" onClick={(event) => event.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={providerSelected(provider)}
-                      onChange={(event) => setProvider(provider, event.target.checked)}
-                    />
-                    <span>{providerLabel(provider)}</span>
-                  </label>
-                  <span className="model-provider-count">{groupedModels[provider]?.length || 0} models</span>
-                </summary>
-                <div className="model-option-list">
-                  {(groupedModels[provider] || []).map((model) => (
-                    <label className="model-option" key={modelKey(model)}>
-                      <input
-                        type="checkbox"
-                        checked={selectedKeys.has(modelKey(model))}
-                        onChange={(event) => setModel(model, event.target.checked)}
-                      />
-                      <span>{modelLabel(model)}</span>
-                    </label>
-                  ))}
-                </div>
-              </details>
-            ))}
+            {unrestricted ? (
+              <p className="admin-muted">All enabled models are allowed for this Ozwell key.</p>
+            ) : filteredProviderNames.length ? (
+              filteredProviderNames.map((provider) => {
+                const providerList = filteredGrouped[provider] || [];
+                const selectedCount = selectedKeys.has(providerWideKey(provider))
+                  ? providerList.length
+                  : providerList.filter((model) => selectedKeys.has(modelKey(model))).length;
+                return (
+                  <details className="model-provider-group" key={provider} open={!!filterQuery || selectedCount > 0}>
+                    <summary>
+                      <span>{providerLabel(provider)}</span>
+                      <span className={`model-provider-count${selectedCount > 0 ? ' has-selected' : ''}`}>
+                        {selectedCount > 0 ? `${selectedCount} of ${providerList.length}` : `${providerList.length} models`}
+                      </span>
+                    </summary>
+                    <div className="model-option-list">
+                      <label className="model-option model-provider-toggle-row">
+                        <input
+                          type="checkbox"
+                          checked={providerSelected(provider)}
+                          disabled={loading || saving}
+                          onChange={(event) => setProvider(provider, event.target.checked)}
+                        />
+                        <span>All {providerLabel(provider)} models</span>
+                      </label>
+                      {providerList.map((model) => (
+                        <label className="model-option model-option-indent" key={modelKey(model)}>
+                          <input
+                            type="checkbox"
+                            checked={modelSelected(model)}
+                            disabled={loading || saving}
+                            onChange={(event) => setModel(model, event.target.checked)}
+                          />
+                          <span>{modelLabel(model)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+                );
+              })
+            ) : (
+              <p className="agent-model-filter-empty">No models match "{filterQuery}"</p>
+            )}
           </div>
 
           <div className="effective-models">
@@ -527,11 +620,12 @@ function ModelRestrictionsEditor({
             {effectiveModels.length ? (
               <div className="model-chip-list" aria-label={`${effectiveModels.length} effective models`}>
                 <strong>{effectiveModels.length}</strong>
-                {effectiveModels.map((model) => (
+                {effectiveModels.slice(0, 8).map((model) => (
                   <span className="model-chip" key={modelKey(model)}>
                     {modelLabel(model)}
                   </span>
                 ))}
+                {effectiveModels.length > 8 && <span className="model-chip">+{effectiveModels.length - 8} more</span>}
               </div>
             ) : (
               <strong>None returned</strong>

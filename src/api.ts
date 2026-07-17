@@ -317,6 +317,14 @@ export async function listModels() {
   return payload.data || [];
 }
 
+export async function listEffectiveModels(parentKey: string) {
+  const payload = await request<{ data?: ModelListItem[] }>('/v1/models/effective', {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${parentKey}` },
+  });
+  return payload.data || [];
+}
+
 export function revealParentKey() {
   return request<ParentKeyResponse>('/v1/manager/parent-key/reveal', {
     method: 'POST',

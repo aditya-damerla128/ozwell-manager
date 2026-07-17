@@ -41,6 +41,7 @@ import {
   getMe,
   listNotifications,
   listAgents,
+  listEffectiveModels,
   listModels,
   markAllNotificationsRead,
   markNotificationRead,
@@ -139,6 +140,14 @@ function modelName(model: ModelListItem | ModelRef) {
 
 function modelKey(model: ModelListItem | ModelRef) {
   return `${modelProvider(model)}:${modelName(model)}`;
+}
+
+function providerWideKey(provider: string) {
+  return `${provider}:*`;
+}
+
+function selectionKey(model: ModelRef) {
+  return model.model ? modelKey(model) : providerWideKey(model.provider);
 }
 
 function modelLabel(model: ModelListItem | ModelRef) {
@@ -407,19 +416,33 @@ function legacyModelRef(agent: Pick<AgentDetail, 'default_model'> | Pick<AgentLi
 }
 
 function refsToKeys(models: ModelRef[]) {
-  return new Set(models.filter((model) => model.provider && model.model).map(modelKey));
+  return new Set(models.filter((model) => model.provider).map(selectionKey));
 }
 
 function refsFromKeys(keys: Set<string>, models: ModelListItem[]) {
-  return enabledModels(models)
-    .filter((model) => keys.has(modelKey(model)))
-    .map((model) => ({ provider: modelProvider(model), model: modelName(model) }));
+  const refs: ModelRef[] = [];
+  const enabled = enabledModels(models);
+  const providers = Array.from(new Set(enabled.map(modelProvider))).sort();
+
+  for (const provider of providers) {
+    if (keys.has(providerWideKey(provider))) {
+      refs.push({ provider });
+      continue;
+    }
+    refs.push(
+      ...enabled
+        .filter((model) => modelProvider(model) === provider && keys.has(modelKey(model)))
+        .map((model) => ({ provider, model: modelName(model) })),
+    );
+  }
+
+  return refs;
 }
 
 function conflictExists(allowedKeys: Set<string>, defaultModel: ModelRef | null) {
   if (!allowedKeys.size) return false;
-  const key = defaultModel?.provider && defaultModel?.model ? modelKey(defaultModel) : null;
-  return key !== null && !allowedKeys.has(key);
+  if (!defaultModel?.provider || !defaultModel.model) return false;
+  return !allowedKeys.has(modelKey(defaultModel)) && !allowedKeys.has(providerWideKey(defaultModel.provider));
 }
 
 function ModelAccessControls({
@@ -483,21 +506,38 @@ function ModelAccessControls({
     onAllowedKeysChange(seed);
   }
 
+  function providerSelected(provider: string) {
+    const models = groupedModels[provider] || [];
+    return allowedKeys.has(providerWideKey(provider)) || (models.length > 0 && models.every((model) => allowedKeys.has(modelKey(model))));
+  }
+
+  function providerModelSelected(model: ModelListItem) {
+    return allowedKeys.has(providerWideKey(modelProvider(model))) || allowedKeys.has(modelKey(model));
+  }
+
   function toggleProvider(provider: string, enabled: boolean) {
     const next = new Set(allowedKeys);
     for (const model of groupedModels[provider] || []) {
-      const key = modelKey(model);
-      if (enabled) next.add(key);
-      else next.delete(key);
+      next.delete(modelKey(model));
     }
+    if (enabled) next.add(providerWideKey(provider));
+    else next.delete(providerWideKey(provider));
     onAllowedKeysChange(next);
   }
 
   function toggleAllowedModel(model: ModelListItem, enabled: boolean) {
+    const provider = modelProvider(model);
+    const providerModels = groupedModels[provider] || [];
     const next = new Set(allowedKeys);
-    const key = modelKey(model);
-    if (enabled) next.add(key);
-    else next.delete(key);
+    next.delete(providerWideKey(provider));
+    for (const item of providerModels) {
+      const key = modelKey(item);
+      if (key === modelKey(model)) {
+        if (enabled) next.add(key);
+      } else if (providerModelSelected(item)) {
+        next.add(key);
+      }
+    }
     onAllowedKeysChange(next);
   }
 
@@ -528,7 +568,7 @@ function ModelAccessControls({
 
       <div className="agent-model-defaults">
         <label>
-          <span>Provider</span>
+          <span>Fallback provider</span>
           <select value={selectedProvider} onChange={(event) => changeProvider(event.target.value)} disabled={disabled || !providerNames.length}>
             {!providerNames.length && <option value="">No providers</option>}
             {providerNames.map((provider) => (
@@ -537,7 +577,7 @@ function ModelAccessControls({
           </select>
         </label>
         <label>
-          <span>Default model</span>
+          <span>Fallback model</span>
           <select value={selectedModel} onChange={(event) => changeModel(event.target.value)} disabled={disabled || !providerModels.length}>
             {!providerModels.length && <option value="">No models</option>}
             {providerModels.map((model) => (
@@ -545,11 +585,13 @@ function ModelAccessControls({
             ))}
           </select>
         </label>
+        <p className="agent-model-restriction-hint">Used when a request does not specify a model.</p>
       </div>
 
       {hasConflict && (
-        <p className="agent-model-conflict-warning">Default model is not in the allowed list — add it below or change the default.</p>
+        <p className="agent-model-conflict-warning">Fallback model is not in the allowed list — add it below or change the fallback.</p>
       )}
+      {!providerNames.length && <p className="agent-model-restriction-hint">No provider models are currently available.</p>}
 
       <div className="agent-model-restriction-section">
         <span className="agent-model-controls-sublabel">Allowed models</span>
@@ -593,8 +635,10 @@ function ModelAccessControls({
             <div className="model-restrictions-groups agent-model-groups">
               {filteredProviderNames.map((provider) => {
                 const providerList = filteredGrouped[provider] || [];
-                const selectedCount = providerList.filter((m) => allowedKeys.has(modelKey(m))).length;
-                const allChecked = providerList.length > 0 && providerList.every((m) => allowedKeys.has(modelKey(m)));
+                const selectedCount = allowedKeys.has(providerWideKey(provider))
+                  ? providerList.length
+                  : providerList.filter((m) => allowedKeys.has(modelKey(m))).length;
+                const allChecked = providerSelected(provider);
                 return (
                   <details className="model-provider-group" key={provider} open={!!filterQuery || selectedCount > 0}>
                     <summary>
@@ -617,7 +661,7 @@ function ModelAccessControls({
                         <label className="model-option model-option-indent" key={modelKey(model)}>
                           <input
                             type="checkbox"
-                            checked={allowedKeys.has(modelKey(model))}
+                            checked={providerModelSelected(model)}
                             disabled={disabled}
                             onChange={(event) => toggleAllowedModel(model, event.target.checked)}
                           />
@@ -667,6 +711,7 @@ function AgentModelPolicyDialog({
   const [defaultModel, setDefaultModel] = useState<ModelRef | null>(fallbackDefault);
   const [allowedKeys, setAllowedKeys] = useState<Set<string>>(new Set());
   const [policy, setPolicy] = useState<AgentModelPolicyResponse | null>(null);
+  const modelOptions = policy ? policy.effective_models : [];
   const hasConflict = conflictExists(allowedKeys, defaultModel);
 
   useEffect(() => {
@@ -676,7 +721,7 @@ function AgentModelPolicyDialog({
       .then((payload) => {
         if (!active) return;
         setPolicy(payload);
-        setDefaultModel(payload.default_model || fallbackDefault);
+        setDefaultModel(payload.default_model || firstModelRef(payload.effective_models) || fallbackDefault);
         setAllowedKeys(refsToKeys(payload.allowed_models));
         setState('ready');
       })
@@ -691,7 +736,7 @@ function AgentModelPolicyDialog({
   }, [agent.id, fallbackDefault]);
 
   function resetPolicy() {
-    setDefaultModel(policy?.default_model || fallbackDefault);
+    setDefaultModel(policy?.default_model || firstModelRef(policy?.effective_models || []) || fallbackDefault);
     setAllowedKeys(refsToKeys(policy?.allowed_models || []));
     setError('');
   }
@@ -700,7 +745,7 @@ function AgentModelPolicyDialog({
     setSaving(true);
     setError('');
     try {
-      const saved = await updateAgentModelPolicy(agent.id, defaultModel, refsFromKeys(allowedKeys, models));
+      const saved = await updateAgentModelPolicy(agent.id, defaultModel, refsFromKeys(allowedKeys, modelOptions));
       setPolicy(saved);
       setDefaultModel(saved.default_model || defaultModel);
       setAllowedKeys(refsToKeys(saved.allowed_models));
@@ -724,7 +769,7 @@ function AgentModelPolicyDialog({
         {error && <Notice tone="danger">{error}</Notice>}
         {state === 'ready' && (
           <ModelAccessControls
-            models={models}
+            models={modelOptions}
             defaultModel={defaultModel}
             allowedKeys={allowedKeys}
             effectiveModels={policy?.effective_models}
@@ -773,7 +818,11 @@ function AgentEditorPage({
   const [error, setError] = useState('');
   const [policyLoading, setPolicyLoading] = useState(false);
   const [policy, setPolicy] = useState<AgentModelPolicyResponse | null>(null);
-  const fallbackDefault = useMemo(() => (mode === 'create' ? firstModelRef(models) : legacyModelRef(agent, models)), [agent, mode, models]);
+  const [createModels, setCreateModels] = useState<ModelListItem[]>([]);
+  const modelOptions = mode === 'create' ? createModels : policy ? policy.effective_models : [];
+  const createFallback = useMemo(() => firstModelRef(createModels), [createModels]);
+  const editFallback = useMemo(() => legacyModelRef(agent, models), [agent, models]);
+  const fallbackDefault = mode === 'create' ? createFallback : editFallback;
   const [defaultModel, setDefaultModel] = useState<ModelRef | null>(fallbackDefault);
   const [allowedKeys, setAllowedKeys] = useState<Set<string>>(new Set());
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -796,7 +845,8 @@ function AgentEditorPage({
       .then((payload) => {
         if (!active) return;
         setPolicy(payload);
-        setDefaultModel(payload.default_model || fallbackDefault);
+        const nextDefault = payload.default_model || firstModelRef(payload.effective_models) || fallbackDefault;
+        setDefaultModel(nextDefault);
         setAllowedKeys(refsToKeys(payload.allowed_models));
       })
       .catch((err) => {
@@ -809,7 +859,39 @@ function AgentEditorPage({
     return () => {
       active = false;
     };
-  }, [agent, mode, models, fallbackDefault]);
+  }, [agent, mode, fallbackDefault]);
+
+  useEffect(() => {
+    let active = true;
+    if (mode !== 'create') {
+      setCreateModels([]);
+      return undefined;
+    }
+
+    setPolicyLoading(true);
+    setError('');
+    revealParentKey()
+      .then((payload) => {
+        const parentKey = payload.parent_key || payload.key;
+        return parentKey ? listEffectiveModels(parentKey) : [];
+      })
+      .then((nextModels) => {
+        if (!active) return;
+        setCreateModels(nextModels);
+        setDefaultModel(firstModelRef(nextModels));
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'Unable to load effective models.');
+      })
+      .finally(() => {
+        if (active) setPolicyLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [mode]);
 
   async function submit(yaml: string) {
     if (hasConflict) {
@@ -819,7 +901,7 @@ function AgentEditorPage({
     setSaving(true);
     setError('');
     try {
-      const allowedModels = refsFromKeys(allowedKeys, models);
+      const allowedModels = refsFromKeys(allowedKeys, modelOptions);
       if (mode === 'create') {
         const created = await createAgent(yaml);
         await updateAgentModelPolicy(created.agent_id, defaultModel, allowedModels);
@@ -841,7 +923,7 @@ function AgentEditorPage({
     setSavingPolicy(true);
     setError('');
     try {
-      const saved = await updateAgentModelPolicy(agent.agent_id, defaultModel, refsFromKeys(allowedKeys, models));
+      const saved = await updateAgentModelPolicy(agent.agent_id, defaultModel, refsFromKeys(allowedKeys, modelOptions));
       setPolicy(saved);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save model policy.');
@@ -919,7 +1001,7 @@ function AgentEditorPage({
           </button>
           <div className="editor-sidebar-content">
             <ModelAccessControls
-              models={models}
+              models={modelOptions}
               defaultModel={defaultModel}
               allowedKeys={allowedKeys}
               effectiveModels={policy?.effective_models}
@@ -927,7 +1009,7 @@ function AgentEditorPage({
               disabled={saving || savingPolicy}
               savingPolicy={savingPolicy}
               onReset={mode === 'edit' ? () => {
-                setDefaultModel(policy?.default_model || fallbackDefault);
+                setDefaultModel(policy?.default_model || firstModelRef(policy?.effective_models || []) || fallbackDefault);
                 setAllowedKeys(refsToKeys(policy?.allowed_models || []));
                 setError('');
               } : undefined}
